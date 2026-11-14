@@ -18,7 +18,7 @@ def run_derivatives_tracker():
 
     while True:
         try:
-            # Example: Fetch global Bitcoin futures Open Interest from public exchange endpoints
+            # Fetch global Bitcoin futures Open Interest from public exchange endpoints
             response = requests.get("https://fapi.binance.com/fapi/v1/openInterest?symbol=BTCUSDT")
             if response.status_code == 200:
                 data = response.json()
