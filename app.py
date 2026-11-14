@@ -13,6 +13,8 @@ def health_check():
 def run_bot():
     ETHERSCAN_API_KEY = os.getenv("ETHERSCAN_API_KEY", "97NPEGHCAB541Z54C5HS46I4MY68JT1JSW")
     DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/1571224981495357610/73iNSJys6jCs7f_qRkBFH9IzJk2QmDzwI6JI2jVgH_9hlONCVmYB5R12wmMmbXVGg_6N")
+    SUPABASE_URL = os.getenv("SUPABASE_URL")
+    SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
     WHALE_WATCHLIST = {
         "Binance Hot Wallet": "0x28C6c06298d514Db089934071355E5743bf21d60",
@@ -22,7 +24,7 @@ def run_bot():
         "Jump Trading": "0xf584f8728b874a6a5c7a8d4d387c9aae9172d621"
     }
 
-    print("🚀 Starting Expanded Multi-Wallet Whale Tracker...")
+    print("🚀 Starting Expanded Multi-Wallet Whale Tracker with Supabase Logging...")
     seen_txs = set()
 
     while True:
@@ -39,6 +41,7 @@ def run_bot():
                             eth_amount = int(tx["value"]) / 10**18
                             
                             if eth_amount > 20:
+                                # 1. Send Discord Alert
                                 discord_payload = {
                                     "content": f"🚨 **WHALE MOVEMENT: {wallet_name}** 🚨\n"
                                                f"• **Amount:** `{eth_amount:,.2f} ETH`\n"
@@ -47,7 +50,26 @@ def run_bot():
                                                f"• **Link:** https://etherscan.io/tx/{tx_hash}`"
                                 }
                                 requests.post(DISCORD_WEBHOOK_URL, json=discord_payload)
-                                print(f"✅ Alert sent for {wallet_name}: {eth_amount:,.2f} ETH")
+                                
+                                # 2. Save to Supabase Database
+                                if SUPABASE_URL and SUPABASE_KEY:
+                                    sb_url = f"{SUPABASE_URL}/rest/v1/whale_txs"
+                                    sb_headers = {
+                                        "apikey": SUPABASE_KEY,
+                                        "Authorization": f"Bearer {SUPABASE_KEY}",
+                                        "Content-Type": "application/json",
+                                        "Prefer": "return=minimal"
+                                    }
+                                    sb_data = {
+                                        "wallet_name": wallet_name,
+                                        "eth_amount": float(eth_amount),
+                                        "tx_from": tx['from'],
+                                        "tx_to": tx['to'],
+                                        "tx_hash": tx_hash
+                                    }
+                                    requests.post(sb_url, json=sb_data, headers=sb_headers)
+
+                                print(f"✅ Alert sent & logged for {wallet_name}: {eth_amount:,.2f} ETH")
                 time.sleep(2)
             except Exception as e:
                 print(f"Error checking {wallet_name}: {e}")
