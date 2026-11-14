@@ -10,6 +10,23 @@ app = Flask(__name__)
 def health_check():
     return "Derivatives & Whale Terminal Backend is live 24/7!"
 
+# Keep-alive loop to prevent Render free tier from sleeping
+def keep_alive():
+    # Render automatically injects this environment variable into web services
+    render_url = os.getenv("RENDER_EXTERNAL_URL")
+    if not render_url:
+        print("⚠️ RENDER_EXTERNAL_URL not found. Self-ping disabled.")
+        return
+
+    print(f"💓 Keep-alive worker initialized for: {render_url}")
+    while True:
+        try:
+            response = requests.get(render_url)
+            print(f"💓 Self-ping sent successfully. Status: {response.status_code}")
+        except Exception as e:
+            print(f"Self-ping error: {e}")
+        time.sleep(300) # Ping every 5 minutes (300 seconds)
+
 def run_derivatives_tracker():
     SUPABASE_URL = os.getenv("SUPABASE_URL")
     SUPABASE_KEY = os.getenv("SUPABASE_KEY")
@@ -18,14 +35,12 @@ def run_derivatives_tracker():
 
     while True:
         try:
-            # Fetch global Bitcoin futures Open Interest from public exchange endpoints
             response = requests.get("https://fapi.binance.com/fapi/v1/openInterest?symbol=BTCUSDT")
             if response.status_code == 200:
                 data = response.json()
                 symbol = data.get("symbol")
                 open_interest = float(data.get("openInterest", 0))
                 
-                # Log or push to Supabase time-series table
                 if SUPABASE_URL and SUPABASE_KEY:
                     sb_url = f"{SUPABASE_URL}/rest/v1/derivatives_metrics"
                     sb_headers = {
@@ -45,11 +60,16 @@ def run_derivatives_tracker():
         except Exception as e:
             print(f"Error fetching derivatives data: {e}")
             
-        time.sleep(60) # Poll every minute
+        time.sleep(60) # Poll Binance every minute
 
 if __name__ == "__main__":
+    # Start Binance data tracker background thread
     bot_thread = threading.Thread(target=run_derivatives_tracker, daemon=True)
     bot_thread.start()
+    
+    # Start self-ping keep-alive background thread
+    ping_thread = threading.Thread(target=keep_alive, daemon=True)
+    ping_thread.start()
     
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
