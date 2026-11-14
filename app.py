@@ -8,76 +8,47 @@ app = Flask(__name__)
 
 @app.route("/")
 def health_check():
-    return "Whale Bot is running 24/7 in the cloud!"
+    return "Derivatives & Whale Terminal Backend is live 24/7!"
 
-def run_bot():
-    ETHERSCAN_API_KEY = os.getenv("ETHERSCAN_API_KEY", "97NPEGHCAB541Z54C5HS46I4MY68JT1JSW")
-    DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/1571224981495357610/73iNSJys6jCs7f_qRkBFH9IzJk2QmDzwI6JI2jVgH_9hlONCVmYB5R12wmMmbXVGg_6N")
+def run_derivatives_tracker():
     SUPABASE_URL = os.getenv("SUPABASE_URL")
     SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-    WHALE_WATCHLIST = {
-        "Binance Hot Wallet": "0x28C6c06298d514Db089934071355E5743bf21d60",
-        "Kraken Hot Wallet": "0x2098C222d3780D21B8516F54D742617f695276e0",
-        "Tether Treasury": "0x63a99E256C82BFA3b890833F9C7D4f92d6e3e5E6",
-        "Coinbase Prime": "0xcd531ae9efcce479654c4926dec5f6209531ca7b",
-        "Jump Trading": "0xf584f8728b874a6a5c7a8d4d387c9aae9172d621"
-    }
-
-    print("🚀 Starting Expanded Multi-Wallet Whale Tracker with Supabase Logging...")
-    seen_txs = set()
+    print("🚀 Starting Derivatives Data Ingestion Engine...")
 
     while True:
-        for wallet_name, address in WHALE_WATCHLIST.items():
-            try:
-                url = f"https://api.etherscan.io/api?module=account&action=txlist&address={address}&page=1&offset=3&sort=desc&apikey={ETHERSCAN_API_KEY}"
-                response = requests.get(url).json()
+        try:
+            # Example: Fetch global Bitcoin futures Open Interest from public exchange endpoints
+            response = requests.get("https://fapi.binance.com/fapi/v1/openInterest?symbol=BTCUSDT")
+            if response.status_code == 200:
+                data = response.json()
+                symbol = data.get("symbol")
+                open_interest = float(data.get("openInterest", 0))
                 
-                if response.get("status") == "1":
-                    for tx in response["result"]:
-                        tx_hash = tx["hash"]
-                        if tx_hash not in seen_txs:
-                            seen_txs.add(tx_hash)
-                            eth_amount = int(tx["value"]) / 10**18
-                            
-                            if eth_amount > 20:
-                                # 1. Send Discord Alert
-                                discord_payload = {
-                                    "content": f"🚨 **WHALE MOVEMENT: {wallet_name}** 🚨\n"
-                                               f"• **Amount:** `{eth_amount:,.2f} ETH`\n"
-                                               f"• **From:** `{tx['from'][:10]}...`\n"
-                                               f"• **To:** `{tx['to'][:10]}...`\n"
-                                               f"• **Link:** https://etherscan.io/tx/{tx_hash}`"
-                                }
-                                requests.post(DISCORD_WEBHOOK_URL, json=discord_payload)
-                                
-                                # 2. Save to Supabase Database
-                                if SUPABASE_URL and SUPABASE_KEY:
-                                    sb_url = f"{SUPABASE_URL}/rest/v1/whale_txs"
-                                    sb_headers = {
-                                        "apikey": SUPABASE_KEY,
-                                        "Authorization": f"Bearer {SUPABASE_KEY}",
-                                        "Content-Type": "application/json",
-                                        "Prefer": "return=minimal"
-                                    }
-                                    sb_data = {
-                                        "wallet_name": wallet_name,
-                                        "eth_amount": float(eth_amount),
-                                        "tx_from": tx['from'],
-                                        "tx_to": tx['to'],
-                                        "tx_hash": tx_hash
-                                    }
-                                    requests.post(sb_url, json=sb_data, headers=sb_headers)
+                # Log or push to Supabase time-series table
+                if SUPABASE_URL and SUPABASE_KEY:
+                    sb_url = f"{SUPABASE_URL}/rest/v1/derivatives_metrics"
+                    sb_headers = {
+                        "apikey": SUPABASE_KEY,
+                        "Authorization": f"Bearer {SUPABASE_KEY}",
+                        "Content-Type": "application/json",
+                        "Prefer": "return=minimal"
+                    }
+                    sb_data = {
+                        "symbol": symbol,
+                        "metric_type": "open_interest",
+                        "value": open_interest
+                    }
+                    requests.post(sb_url, json=sb_data, headers=sb_headers)
+                print(f"✅ Logged OI for {symbol}: {open_interest:,.2f}")
 
-                                print(f"✅ Alert sent & logged for {wallet_name}: {eth_amount:,.2f} ETH")
-                time.sleep(2)
-            except Exception as e:
-                print(f"Error checking {wallet_name}: {e}")
-                
-        time.sleep(30)
+        except Exception as e:
+            print(f"Error fetching derivatives data: {e}")
+            
+        time.sleep(60) # Poll every minute
 
 if __name__ == "__main__":
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
+    bot_thread = threading.Thread(target=run_derivatives_tracker, daemon=True)
     bot_thread.start()
     
     port = int(os.environ.get("PORT", 10000))
