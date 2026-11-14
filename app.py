@@ -7,11 +7,11 @@ from flask import Flask, jsonify
 from flask_cors import CORS
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS so your GitHub Pages frontend can talk to Render
+CORS(app)  # Enables cross-origin requests from your GitHub Pages frontend
 
 @app.route("/")
 def health_check():
-    return "SUPRIM Terminal Backend is live 24/7!"
+    return "SUPRIM Institutional Terminal Backend is live 24/7!"
 
 # Keep-alive loop to prevent Render free tier from sleeping
 def keep_alive():
@@ -29,7 +29,7 @@ def keep_alive():
             print(f"Self-ping error: {e}")
         time.sleep(300)
 
-# Live Screener API Endpoint
+# Live Screener API Endpoint using yfinance
 @app.route("/api/screener")
 def get_screener_data():
     tickers = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AVGO", "PLTR", "BTC-USD", "ETH-USD", "SOL-USD"]
@@ -50,7 +50,6 @@ def get_screener_data():
                 change_pct = ((price - prev_close) / prev_close) * 100
                 volume = int(latest["Volume"])
                 
-                # Fetch basic fundamentals if available
                 t_obj = yf.Ticker(ticker)
                 info = t_obj.info
                 name = info.get("shortName", ticker)
@@ -75,10 +74,43 @@ def get_screener_data():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# Background thread to pull Binance Open Interest metrics
+def run_derivatives_tracker():
+    SUPABASE_URL = os.getenv("SUPABASE_URL")
+    SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+    print("🚀 Starting Derivatives Data Ingestion Engine...")
+    while True:
+        try:
+            response = requests.get("https://fapi.binance.com/fapi/v1/openInterest?symbol=BTCUSDT")
+            if response.status_code == 200:
+                data = response.json()
+                symbol = data.get("symbol")
+                open_interest = float(data.get("openInterest", 0))
+                
+                if SUPABASE_URL and SUPABASE_KEY:
+                    sb_url = f"{SUPABASE_URL}/rest/v1/derivatives_metrics"
+                    sb_headers = {
+                        "apikey": SUPABASE_KEY,
+                        "Authorization": f"Bearer {SUPABASE_KEY}",
+                        "Content-Type": "application/json",
+                        "Prefer": "return=minimal"
+                    }
+                    sb_data = {
+                        "symbol": symbol,
+                        "metric_type": "open_interest",
+                        "value": open_interest
+                    }
+                    requests.post(sb_url, json=sb_data, headers=sb_headers)
+                print(f"✅ Logged OI for {symbol}: {open_interest:,.2f}")
+        except Exception as e:
+            print(f"Error fetching derivatives data: {e}")
+        time.sleep(60)
+
 if __name__ == "__main__":
-    # Start keep-alive thread
-    ping_thread = threading.Thread(target=keep_alive, daemon=True)
-    ping_thread.start()
+    # Start background threads
+    threading.Thread(target=keep_alive, daemon=True).start()
+    threading.Thread(target=run_derivatives_tracker, daemon=True).start()
     
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
