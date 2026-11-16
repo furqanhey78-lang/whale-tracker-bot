@@ -7,110 +7,146 @@ from flask import Flask, jsonify
 from flask_cors import CORS
 
 app = Flask(__name__)
-CORS(app)  # Enables cross-origin requests from your GitHub Pages frontend
+CORS(app)
+
+# Curated Smart-Money & Institutional Wallet Dictionary (Your Moat)
+SMART_WALLETS = {
+    "0x28c6c06298d514db089934071355e5743bf21d60": "Binance Hot Wallet 14 (Exchange Flow)",
+    "0x21a31ee1afc51d94c2efccaa2092ad1028285549": "Binance Cold / Institutional Reserve",
+    "0xdbf5e9c5206d0db70a90108bf936da60221dc080": "Wintermute Market Maker",
+    "0xf584f8728b874a6a5c7a8d4d387c9aae9172d621": "Jump Trading Institutional Desk",
+    "0xae2fc483527b8ef99eb5d9b44875f005ba1fae13": "jaredfromsubway.eth (MEV Whale)"
+}
+
+SEEN_TXS = set()
+SEEN_OPTIONS = set()
 
 @app.route("/")
-def health_check():
-    return "SUPRIM Institutional Terminal Backend is live 24/7!"
+def health():
+    return "SUPRIM Alert Engine Live"
 
-# Keep-alive loop to prevent Render free tier from sleeping
-def keep_alive():
-    render_url = os.getenv("RENDER_EXTERNAL_URL")
-    if not render_url:
-        print("⚠️ RENDER_EXTERNAL_URL not found. Self-ping disabled.")
+def send_suprim_discord_alert(title, description, color=2712319, fields=None):
+    webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
+    if not webhook_url:
+        print("⚠️ DISCORD_WEBHOOK_URL not set in Render Environment Variables.")
         return
 
-    print(f"💓 Keep-alive worker initialized for: {render_url}")
+    embed = {
+        "title": title,
+        "description": description,
+        "color": color,
+        "fields": fields or [],
+        "footer": {"text": "SUPRIM Institutional Alert Engine • Real-Time Signal"}
+    }
+    try:
+        requests.post(webhook_url, json={"username": "SUPRIM Alerts", "embeds": [embed]}, timeout=10)
+    except Exception as e:
+        print(f"Discord webhook error: {e}")
+
+# 1. Crypto Smart-Money Wallet Monitor
+def monitor_crypto_whales():
+    etherscan_key = os.getenv("ETHERSCAN_API_KEY", "")
+    supabase_url = os.getenv("SUPABASE_URL")
+    supabase_key = os.getenv("SUPABASE_KEY")
+
     while True:
+        for address, label in SMART_WALLETS.items():
+            try:
+                url = f"https://api.etherscan.io/v2/api?chainid=1&module=account&action=txlist&address={address}&startblock=0&endblock=99999999&page=1&offset=5&sort=desc&apikey={etherscan_key}"
+                res = requests.get(url, timeout=10).json()
+                txs = res.get("result", [])
+                if not isinstance(txs, list):
+                    continue
+
+                for tx in txs:
+                    tx_hash = tx.get("hash")
+                    eth_val = int(tx.get("value", 0)) / 10**18
+                    if tx_hash not in SEEN_TXS and eth_val >= 25.0:
+                        SEEN_TXS.add(tx_hash)
+                        direction = "OUTFLOW 🔴" if tx.get("from", "").lower() == address.lower() else "INFLOW 🟢"
+                        
+                        send_suprim_discord_alert(
+                            title=f"🐋 SMART MONEY MOVE: {eth_val:,.2f} ETH",
+                            description=f"**Entity:** `{label}`\n**Direction:** {direction}",
+                            color=15158332 if "OUTFLOW" in direction else 3066993,
+                            fields=[
+                                {"name": "Amount", "value": f"{eth_val:,.2f} ETH", "inline": True},
+                                {"name": "Etherscan", "value": f"[View Tx ↗](https://etherscan.io/tx/{tx_hash})", "inline": True}
+                            ]
+                        )
+
+                        if supabase_url and supabase_key:
+                            requests.post(
+                                f"{supabase_url}/rest/v1/whale_txs",
+                                json={
+                                    "wallet_name": label,
+                                    "eth_amount": round(eth_val, 2),
+                                    "tx_hash": tx_hash,
+                                    "tx_from": tx.get("from"),
+                                    "tx_to": tx.get("to")
+                                },
+                                headers={
+                                    "apikey": supabase_key,
+                                    "Authorization": f"Bearer {supabase_key}",
+                                    "Content-Type": "application/json"
+                                }
+                            )
+            except Exception as e:
+                print(f"Whale scan error: {e}")
+            time.sleep(2)
+        time.sleep(45)
+
+# 2. Unusual Stock Options Sweep Scanner
+def monitor_stock_options():
+    watchlist = ["NVDA", "TSLA", "AAPL", "PLTR", "AMD", "COIN", "MSTR", "SPY"]
+    while True:
+        for ticker in watchlist:
+            try:
+                stock = yf.Ticker(ticker)
+                expirations = stock.options
+                if not expirations:
+                    continue
+                nearest_exp = expirations[0]
+                chain = stock.option_chain(nearest_exp)
+                
+                for opt_type, df in [("CALL 🟢", chain.calls), ("PUT 🔴", chain.puts)]:
+                    unusual = df[(df["volume"] > 2000) & (df["volume"] > df["openInterest"] * 3)]
+                    for _, row in unusual.iterrows():
+                        contract = row["contractSymbol"]
+                        if contract not in SEEN_OPTIONS:
+                            SEEN_OPTIONS.add(contract)
+                            vol = int(row["volume"])
+                            oi = int(row["openInterest"])
+                            strike = row["strike"]
+                            last_price = row["lastPrice"]
+                            premium = vol * last_price * 100
+
+                            if premium >= 50000:
+                                send_suprim_discord_alert(
+                                    title=f"🚨 UNUSUAL OPTIONS SWEEP: ${ticker}",
+                                    description=f"Massive volume spike detected on **{ticker} ${strike} {opt_type}** ({nearest_exp})",
+                                    color=3447003,
+                                    fields=[
+                                        {"name": "Est. Premium", "value": f"${premium:,.0f}", "inline": True},
+                                        {"name": "Vol / OI", "value": f"{vol:,} / {oi:,}", "inline": True}
+                                    ]
+                                )
+            except Exception as e:
+                print(f"Options scan error for {ticker}: {e}")
+            time.sleep(3)
+        time.sleep(180)
+
+def keep_alive():
+    url = os.getenv("RENDER_EXTERNAL_URL")
+    while url:
         try:
-            response = requests.get(render_url)
-            print(f"💓 Self-ping sent. Status: {response.status_code}")
-        except Exception as e:
-            print(f"Self-ping error: {e}")
+            requests.get(url, timeout=10)
+        except Exception:
+            pass
         time.sleep(300)
 
-# Live Screener API Endpoint using yfinance
-@app.route("/api/screener")
-def get_screener_data():
-    tickers = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AVGO", "PLTR", "BTC-USD", "ETH-USD", "SOL-USD"]
-    screener_results = []
-    
-    try:
-        data = yf.download(tickers, period="1d", group_by="ticker", threads=True)
-        for ticker in tickers:
-            try:
-                df = data[ticker] if len(tickers) > 1 else data
-                if df.empty or len(df.dropna()) == 0:
-                    continue
-                latest = df.iloc[-1]
-                prev = df.iloc[-2] if len(df) > 1 else latest
-                
-                price = float(latest["Close"])
-                prev_close = float(prev["Close"])
-                change_pct = ((price - prev_close) / prev_close) * 100
-                volume = int(latest["Volume"])
-                
-                t_obj = yf.Ticker(ticker)
-                info = t_obj.info
-                name = info.get("shortName", ticker)
-                sector = info.get("sector", "Cryptocurrency" if "-USD" in ticker else "Technology")
-                market_cap = info.get("marketCap", 0)
-                pe_ratio = info.get("trailingPE", "N/A")
-                
-                screener_results.append({
-                    "symbol": ticker.replace("-USD", ""),
-                    "name": name,
-                    "sector": sector,
-                    "price": round(price, 2),
-                    "change": round(change_pct, 2),
-                    "volume": f"{volume:,.0f}",
-                    "cap": f"${market_cap:,.0f}" if market_cap else "N/A",
-                    "pe": round(pe_ratio, 2) if isinstance(pe_ratio, (int, float)) else pe_ratio
-                })
-            except Exception as ex:
-                print(f"Error processing {ticker}: {ex}")
-                
-        return jsonify(screener_results)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-# Background thread to pull Binance Open Interest metrics
-def run_derivatives_tracker():
-    SUPABASE_URL = os.getenv("SUPABASE_URL")
-    SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-
-    print("🚀 Starting Derivatives Data Ingestion Engine...")
-    while True:
-        try:
-            response = requests.get("https://fapi.binance.com/fapi/v1/openInterest?symbol=BTCUSDT")
-            if response.status_code == 200:
-                data = response.json()
-                symbol = data.get("symbol")
-                open_interest = float(data.get("openInterest", 0))
-                
-                if SUPABASE_URL and SUPABASE_KEY:
-                    sb_url = f"{SUPABASE_URL}/rest/v1/derivatives_metrics"
-                    sb_headers = {
-                        "apikey": SUPABASE_KEY,
-                        "Authorization": f"Bearer {SUPABASE_KEY}",
-                        "Content-Type": "application/json",
-                        "Prefer": "return=minimal"
-                    }
-                    sb_data = {
-                        "symbol": symbol,
-                        "metric_type": "open_interest",
-                        "value": open_interest
-                    }
-                    requests.post(sb_url, json=sb_data, headers=sb_headers)
-                print(f"✅ Logged OI for {symbol}: {open_interest:,.2f}")
-        except Exception as e:
-            print(f"Error fetching derivatives data: {e}")
-        time.sleep(60)
-
 if __name__ == "__main__":
-    # Start background threads
+    threading.Thread(target=monitor_crypto_whales, daemon=True).start()
+    threading.Thread(target=monitor_stock_options, daemon=True).start()
     threading.Thread(target=keep_alive, daemon=True).start()
-    threading.Thread(target=run_derivatives_tracker, daemon=True).start()
-    
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
